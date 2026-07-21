@@ -32,7 +32,7 @@
   .screen { display: none; }
   .screen.active { display: block; }
 
-  #status {
+  .statusText {
     font-size: 20px;
     margin-bottom: 6px;
     letter-spacing: 1px;
@@ -41,10 +41,10 @@
     transition: 0.3s;
   }
 
-  #roleBadge {
+  #roleBadge, #eloBadge {
     font-size: 14px;
     color: #8a83b0;
-    margin-bottom: 25px;
+    margin-bottom: 6px;
   }
 
   #board {
@@ -53,7 +53,7 @@
     grid-template-rows: repeat(3, 110px);
     gap: 10px;
     justify-content: center;
-    margin: 0 auto;
+    margin: 20px auto 0;
     padding: 14px;
     background: rgba(255,255,255,0.03);
     border-radius: 20px;
@@ -91,7 +91,7 @@
     box-shadow: 0 0 20px rgba(255,255,255,0.4);
   }
 
-  #resetPanel {
+  #resetPanel, #modePanel {
     margin-top: 30px;
     display: flex;
     justify-content: center;
@@ -111,6 +111,7 @@
   }
   .bigBtn:hover { background: rgba(123,92,255,0.3); }
   .bigBtn:disabled { opacity: 0.5; cursor: default; }
+  .bigBtn.ranked { border-color: #ff4ecd; }
 
   #nicknameInput {
     padding: 12px 16px;
@@ -129,32 +130,46 @@
     font-size: 13px;
     color: #8a83b0;
   }
+
+  #eloChangeText {
+    font-size: 15px;
+    margin-top: 10px;
+    min-height: 20px;
+  }
+  .elo-up { color: #6bff9e; }
+  .elo-down { color: #ff6b6b; }
 </style>
 </head>
 <body>
 
 <h1>Tic Tac Toe</h1>
 
+<!-- Screen 1: pick a nickname -->
 <div id="nicknameScreen" class="screen active">
-  <div id="status">What should we call you?</div>
+  <div class="statusText">What should we call you?</div>
   <br>
   <input id="nicknameInput" type="text" placeholder="Enter a nickname" maxlength="16">
   <br>
   <button class="bigBtn" id="saveNicknameBtn">Continue</button>
 </div>
 
+<!-- Screen 2: lobby / find match -->
 <div id="lobbyScreen" class="screen">
-  <div id="lobbyStatus">Ready when you are</div>
-  <div id="resetPanel">
-    <button class="bigBtn" id="findMatchBtn">Find Match</button>
+  <div class="statusText" id="lobbyStatus">Ready when you are</div>
+  <div id="eloBadge"></div>
+  <div id="modePanel">
+    <button class="bigBtn" id="casualBtn">Casual</button>
+    <button class="bigBtn ranked" id="rankedBtn">Ranked</button>
   </div>
-  <div id="hint">You'll be paired with the next player who's also looking for a match</div>
+  <div id="hint">You'll be paired with the next player looking for the same mode</div>
 </div>
 
+<!-- Screen 3: the game -->
 <div id="gameScreen" class="screen">
-  <div id="status">Connecting...</div>
+  <div class="statusText" id="gameStatus">Connecting...</div>
   <div id="roleBadge"></div>
   <div id="board"></div>
+  <div id="eloChangeText"></div>
   <div id="resetPanel">
     <button class="bigBtn" id="leaveBtn">Back to Lobby</button>
   </div>
@@ -169,18 +184,22 @@
   const nicknameInput = document.getElementById('nicknameInput');
   const saveNicknameBtn = document.getElementById('saveNicknameBtn');
   const lobbyStatus = document.getElementById('lobbyStatus');
-  const findMatchBtn = document.getElementById('findMatchBtn');
+  const eloBadge = document.getElementById('eloBadge');
+  const casualBtn = document.getElementById('casualBtn');
+  const rankedBtn = document.getElementById('rankedBtn');
   const leaveBtn = document.getElementById('leaveBtn');
 
   const boardEl = document.getElementById('board');
-  const statusEl = document.getElementById('status');
+  const gameStatus = document.getElementById('gameStatus');
   const roleBadgeEl = document.getElementById('roleBadge');
+  const eloChangeText = document.getElementById('eloChangeText');
 
   function showScreen(screen) {
     [nicknameScreen, lobbyScreen, gameScreen].forEach(s => s.classList.remove('active'));
     screen.classList.add('active');
   }
 
+  // ---- Persistent identity, no password: a random ID saved in this browser ----
   function getPersistentId() {
     let id = localStorage.getItem('ttt_persistentId');
     if (!id) {
@@ -193,12 +212,14 @@
 
   const socket = io();
   let myRole = null;
+  let myElo = null;
+  let currentMode = null;
+  let returnTimer = null;
 
   socket.on('connect', () => {
     const savedNickname = localStorage.getItem('ttt_nickname');
     if (savedNickname) {
       identify(savedNickname);
-      showScreen(lobbyScreen);
     } else {
       showScreen(nicknameScreen);
     }
@@ -208,35 +229,50 @@
     socket.emit('identify', { persistentId, nickname });
   }
 
+  socket.on('identified', ({ elo }) => {
+    myElo = elo;
+    eloBadge.textContent = `Your rating: ${myElo}`;
+    showScreen(lobbyScreen);
+  });
+
   saveNicknameBtn.addEventListener('click', () => {
     const name = nicknameInput.value.trim();
     if (!name) return;
     localStorage.setItem('ttt_nickname', name);
     identify(name);
-    showScreen(lobbyScreen);
   });
   nicknameInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') saveNicknameBtn.click();
   });
 
-  findMatchBtn.addEventListener('click', () => {
-    socket.emit('findMatch');
-    findMatchBtn.disabled = true;
-    lobbyStatus.textContent = 'Looking for an opponent...';
+  function findMatch(mode) {
+    socket.emit('findMatch', mode);
+    casualBtn.disabled = true;
+    rankedBtn.disabled = true;
+    lobbyStatus.textContent = `Looking for a ${mode} opponent...`;
+  }
+  casualBtn.addEventListener('click', () => findMatch('casual'));
+  rankedBtn.addEventListener('click', () => findMatch('ranked'));
+
+  socket.on('queued', ({ mode }) => {
+    lobbyStatus.textContent = `Looking for a ${mode} opponent...`;
   });
 
-  socket.on('queued', () => {
-    lobbyStatus.textContent = 'Looking for an opponent...';
-  });
-
-  socket.on('matchFound', ({ role, opponent }) => {
+  socket.on('matchFound', ({ role, opponent, mode, myElo: elo, opponentElo }) => {
     myRole = role;
-    roleBadgeEl.textContent = `You are ${role} — playing against ${opponent}`;
-    findMatchBtn.disabled = false;
+    currentMode = mode;
+    const modeLabel = mode === 'ranked' ? 'Ranked' : 'Casual';
+    roleBadgeEl.textContent = mode === 'ranked'
+      ? `${modeLabel} — You are ${role} — vs ${opponent} (${opponentElo}) — your rating ${elo}`
+      : `${modeLabel} — You are ${role} — vs ${opponent}`;
+    eloChangeText.textContent = '';
+    casualBtn.disabled = false;
+    rankedBtn.disabled = false;
     lobbyStatus.textContent = 'Ready when you are';
     showScreen(gameScreen);
   });
 
+  // Build the 9 cells once
   const cellEls = [];
   for (let i = 0; i < 9; i++) {
     const cell = document.createElement('div');
@@ -268,25 +304,46 @@
     });
 
     if (state.gameOver) {
-      if (state.winner) {
-        const winnerName = state.names[state.winner];
-        statusEl.textContent = `${winnerName} (${state.winner}) wins! \u{1F389}`;
-        state.winLine.forEach(idx => cellEls[idx].classList.add('win'));
+      let resultText;
+      if (state.winner === null) {
+        resultText = "It's a draw!";
+      } else if (state.winner === myRole) {
+        resultText = state.reason === 'forfeit' ? 'Your opponent left — you win!' : 'You win! 🎉';
       } else {
-        statusEl.textContent = "It's a draw!";
+        resultText = state.reason === 'forfeit' ? 'You left the match' : 'You lose';
       }
+      gameStatus.textContent = resultText;
+
+      if (state.winLine) {
+        state.winLine.forEach(idx => cellEls[idx].classList.add('win'));
+      }
+
+      if (state.eloChange && myRole) {
+        const mine = state.eloChange[myRole];
+        const delta = mine.new - mine.old;
+        const sign = delta > 0 ? '+' : '';
+        eloChangeText.textContent = `Rating: ${mine.old} → ${mine.new} (${sign}${delta})`;
+        eloChangeText.className = delta > 0 ? 'elo-up' : (delta < 0 ? 'elo-down' : '');
+        myElo = mine.new;
+      }
+
+      // Auto-return to the lobby after a few seconds
+      clearTimeout(returnTimer);
+      returnTimer = setTimeout(() => {
+        socket.emit('leaveRoom');
+        eloBadge.textContent = `Your rating: ${myElo}`;
+        showScreen(lobbyScreen);
+      }, 3000);
     } else {
       const turnName = state.names[state.currentPlayer];
-      statusEl.textContent = `${turnName}'s turn (${state.currentPlayer})`;
+      gameStatus.textContent = `${turnName}'s turn (${state.currentPlayer})`;
     }
   }
 
-  socket.on('opponentLeft', () => {
-    statusEl.textContent = 'Your opponent left the game';
-  });
-
   leaveBtn.addEventListener('click', () => {
+    clearTimeout(returnTimer);
     socket.emit('leaveRoom');
+    eloBadge.textContent = `Your rating: ${myElo}`;
     showScreen(lobbyScreen);
   });
 </script>
