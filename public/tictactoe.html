@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tic Tac Toe</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: radial-gradient(circle at top, #1b1033, #05010f 70%);
+    color: #fff;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    text-align: center;
+    padding-top: 40px;
+    overflow-x: hidden;
+  }
+
+  h1 {
+    font-size: 42px;
+    margin-bottom: 4px;
+    background: linear-gradient(90deg, #ff4ecd, #7b5cff, #4ecdff);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: shimmer 4s linear infinite;
+  }
+  @keyframes shimmer {
+    to { background-position: 200% center; }
+  }
+
+  #status {
+    font-size: 20px;
+    margin-bottom: 6px;
+    letter-spacing: 1px;
+    color: #d7d1ff;
+    min-height: 26px;
+    transition: 0.3s;
+  }
+
+  #roleBadge {
+    font-size: 14px;
+    color: #8a83b0;
+    margin-bottom: 25px;
+  }
+
+  #board {
+    display: grid;
+    grid-template-columns: repeat(3, 110px);
+    grid-template-rows: repeat(3, 110px);
+    gap: 10px;
+    justify-content: center;
+    margin: 0 auto;
+    padding: 14px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 20px;
+    box-shadow: 0 0 40px rgba(123, 92, 255, 0.25), inset 0 0 20px rgba(255,255,255,0.03);
+  }
+
+  .cell {
+    position: relative;
+    background: rgba(255,255,255,0.04);
+    border: 2px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    font-size: 54px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.15s ease, background 0.2s, box-shadow 0.2s;
+  }
+  .cell:hover {
+    background: rgba(255,255,255,0.09);
+    transform: translateY(-2px) scale(1.03);
+  }
+  .cell.x { color: #ff4ecd; text-shadow: 0 0 14px #ff4ecd; }
+  .cell.o { color: #4ecdff; text-shadow: 0 0 14px #4ecdff; }
+
+  .cell.pop { animation: pop 0.25s ease; }
+  @keyframes pop {
+    0% { transform: scale(0.3); opacity: 0; }
+    70% { transform: scale(1.15); }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  .cell.win {
+    background: rgba(255,255,255,0.15);
+    box-shadow: 0 0 20px rgba(255,255,255,0.4);
+  }
+
+  #resetPanel {
+    margin-top: 30px;
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+  }
+
+  .readyBtn {
+    padding: 12px 22px;
+    font-size: 15px;
+    font-weight: bold;
+    border-radius: 30px;
+    border: 2px solid #555;
+    background: rgba(255,255,255,0.05);
+    color: #ccc;
+    cursor: pointer;
+    transition: 0.25s;
+  }
+
+  #resetHint {
+    margin-top: 12px;
+    font-size: 13px;
+    color: #8a83b0;
+  }
+</style>
+</head>
+<body>
+
+<h1>Tic Tac Toe</h1>
+<div id="status">Connecting...</div>
+<div id="roleBadge"></div>
+<div id="board"></div>
+
+<div id="resetPanel">
+  <button class="readyBtn" id="resetBtn">Reset Board</button>
+</div>
+<div id="resetHint">Anyone can reset for now — we'll make this fairer later</div>
+
+<!-- socket.io client, served automatically by the server -->
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const boardEl = document.getElementById('board');
+  const statusEl = document.getElementById('status');
+  const roleBadgeEl = document.getElementById('roleBadge');
+  const resetBtn = document.getElementById('resetBtn');
+
+  const socket = io();
+
+  let myRole = null;       // 'X', 'O', or 'spectator' — assigned by the server
+  let latestState = null;  // the last game state the server sent us
+
+  // Build the 9 cells once, then only update what changes
+  const cellEls = [];
+  for (let i = 0; i < 9; i++) {
+    const cell = document.createElement('div');
+    cell.className = 'cell empty';
+    cell.addEventListener('click', () => {
+      socket.emit('makeMove', i);
+    });
+    boardEl.appendChild(cell);
+    cellEls.push(cell);
+  }
+
+  socket.on('assigned', (role) => {
+    myRole = role;
+    if (role === 'spectator') {
+      roleBadgeEl.textContent = "You're spectating (two players are already in)";
+    } else {
+      roleBadgeEl.textContent = `You are playing as ${role}`;
+    }
+  });
+
+  socket.on('state', (state) => {
+    latestState = state;
+    render(state);
+  });
+
+  function render(state) {
+    state.board.forEach((value, i) => {
+      const cell = cellEls[i];
+      const hadValue = cell.textContent !== '';
+      cell.textContent = value || '';
+      cell.className = 'cell';
+      if (value) {
+        cell.classList.add(value.toLowerCase());
+        if (!hadValue) {
+          cell.classList.add('pop');
+          cell.addEventListener('animationend', () => cell.classList.remove('pop'), { once: true });
+        }
+      } else {
+        cell.classList.add('empty');
+      }
+    });
+
+    if (state.gameOver) {
+      if (state.winner) {
+        statusEl.textContent = `Player ${state.winner} wins! 🎉`;
+        state.winLine.forEach(idx => cellEls[idx].classList.add('win'));
+      } else {
+        statusEl.textContent = "It's a draw!";
+      }
+    } else {
+      statusEl.textContent = `Player ${state.currentPlayer}'s turn`;
+    }
+  }
+
+  resetBtn.addEventListener('click', () => {
+    socket.emit('requestReset');
+  });
+</script>
+
+</body>
+</html>
