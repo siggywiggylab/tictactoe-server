@@ -29,6 +29,9 @@
     to { background-position: 200% center; }
   }
 
+  .screen { display: none; }
+  .screen.active { display: block; }
+
   #status {
     font-size: 20px;
     margin-bottom: 6px;
@@ -95,19 +98,33 @@
     gap: 16px;
   }
 
-  .readyBtn {
-    padding: 12px 22px;
-    font-size: 15px;
+  .bigBtn {
+    padding: 14px 28px;
+    font-size: 16px;
     font-weight: bold;
     border-radius: 30px;
-    border: 2px solid #555;
-    background: rgba(255,255,255,0.05);
-    color: #ccc;
+    border: 2px solid #7b5cff;
+    background: rgba(123,92,255,0.15);
+    color: #d7d1ff;
     cursor: pointer;
     transition: 0.25s;
   }
+  .bigBtn:hover { background: rgba(123,92,255,0.3); }
+  .bigBtn:disabled { opacity: 0.5; cursor: default; }
 
-  #resetHint {
+  #nicknameInput {
+    padding: 12px 16px;
+    font-size: 16px;
+    border-radius: 10px;
+    border: 2px solid #555;
+    background: rgba(255,255,255,0.05);
+    color: #fff;
+    text-align: center;
+    margin-bottom: 16px;
+    width: 220px;
+  }
+
+  #hint {
     margin-top: 12px;
     font-size: 13px;
     color: #8a83b0;
@@ -117,51 +134,119 @@
 <body>
 
 <h1>Tic Tac Toe</h1>
-<div id="status">Connecting...</div>
-<div id="roleBadge"></div>
-<div id="board"></div>
 
-<div id="resetPanel">
-  <button class="readyBtn" id="resetBtn">Reset Board</button>
+<div id="nicknameScreen" class="screen active">
+  <div id="status">What should we call you?</div>
+  <br>
+  <input id="nicknameInput" type="text" placeholder="Enter a nickname" maxlength="16">
+  <br>
+  <button class="bigBtn" id="saveNicknameBtn">Continue</button>
 </div>
-<div id="resetHint">Anyone can reset for now — we'll make this fairer later</div>
 
-<!-- socket.io client, served automatically by the server -->
+<div id="lobbyScreen" class="screen">
+  <div id="lobbyStatus">Ready when you are</div>
+  <div id="resetPanel">
+    <button class="bigBtn" id="findMatchBtn">Find Match</button>
+  </div>
+  <div id="hint">You'll be paired with the next player who's also looking for a match</div>
+</div>
+
+<div id="gameScreen" class="screen">
+  <div id="status">Connecting...</div>
+  <div id="roleBadge"></div>
+  <div id="board"></div>
+  <div id="resetPanel">
+    <button class="bigBtn" id="leaveBtn">Back to Lobby</button>
+  </div>
+</div>
+
 <script src="/socket.io/socket.io.js"></script>
 <script>
+  const nicknameScreen = document.getElementById('nicknameScreen');
+  const lobbyScreen = document.getElementById('lobbyScreen');
+  const gameScreen = document.getElementById('gameScreen');
+
+  const nicknameInput = document.getElementById('nicknameInput');
+  const saveNicknameBtn = document.getElementById('saveNicknameBtn');
+  const lobbyStatus = document.getElementById('lobbyStatus');
+  const findMatchBtn = document.getElementById('findMatchBtn');
+  const leaveBtn = document.getElementById('leaveBtn');
+
   const boardEl = document.getElementById('board');
   const statusEl = document.getElementById('status');
   const roleBadgeEl = document.getElementById('roleBadge');
-  const resetBtn = document.getElementById('resetBtn');
+
+  function showScreen(screen) {
+    [nicknameScreen, lobbyScreen, gameScreen].forEach(s => s.classList.remove('active'));
+    screen.classList.add('active');
+  }
+
+  function getPersistentId() {
+    let id = localStorage.getItem('ttt_persistentId');
+    if (!id) {
+      id = 'p_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem('ttt_persistentId', id);
+    }
+    return id;
+  }
+  const persistentId = getPersistentId();
 
   const socket = io();
+  let myRole = null;
 
-  let myRole = null;       // 'X', 'O', or 'spectator' — assigned by the server
-  let latestState = null;  // the last game state the server sent us
+  socket.on('connect', () => {
+    const savedNickname = localStorage.getItem('ttt_nickname');
+    if (savedNickname) {
+      identify(savedNickname);
+      showScreen(lobbyScreen);
+    } else {
+      showScreen(nicknameScreen);
+    }
+  });
 
-  // Build the 9 cells once, then only update what changes
+  function identify(nickname) {
+    socket.emit('identify', { persistentId, nickname });
+  }
+
+  saveNicknameBtn.addEventListener('click', () => {
+    const name = nicknameInput.value.trim();
+    if (!name) return;
+    localStorage.setItem('ttt_nickname', name);
+    identify(name);
+    showScreen(lobbyScreen);
+  });
+  nicknameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') saveNicknameBtn.click();
+  });
+
+  findMatchBtn.addEventListener('click', () => {
+    socket.emit('findMatch');
+    findMatchBtn.disabled = true;
+    lobbyStatus.textContent = 'Looking for an opponent...';
+  });
+
+  socket.on('queued', () => {
+    lobbyStatus.textContent = 'Looking for an opponent...';
+  });
+
+  socket.on('matchFound', ({ role, opponent }) => {
+    myRole = role;
+    roleBadgeEl.textContent = `You are ${role} — playing against ${opponent}`;
+    findMatchBtn.disabled = false;
+    lobbyStatus.textContent = 'Ready when you are';
+    showScreen(gameScreen);
+  });
+
   const cellEls = [];
   for (let i = 0; i < 9; i++) {
     const cell = document.createElement('div');
     cell.className = 'cell empty';
-    cell.addEventListener('click', () => {
-      socket.emit('makeMove', i);
-    });
+    cell.addEventListener('click', () => socket.emit('makeMove', i));
     boardEl.appendChild(cell);
     cellEls.push(cell);
   }
 
-  socket.on('assigned', (role) => {
-    myRole = role;
-    if (role === 'spectator') {
-      roleBadgeEl.textContent = "You're spectating (two players are already in)";
-    } else {
-      roleBadgeEl.textContent = `You are playing as ${role}`;
-    }
-  });
-
   socket.on('state', (state) => {
-    latestState = state;
     render(state);
   });
 
@@ -184,18 +269,25 @@
 
     if (state.gameOver) {
       if (state.winner) {
-        statusEl.textContent = `Player ${state.winner} wins! 🎉`;
+        const winnerName = state.names[state.winner];
+        statusEl.textContent = `${winnerName} (${state.winner}) wins! \u{1F389}`;
         state.winLine.forEach(idx => cellEls[idx].classList.add('win'));
       } else {
         statusEl.textContent = "It's a draw!";
       }
     } else {
-      statusEl.textContent = `Player ${state.currentPlayer}'s turn`;
+      const turnName = state.names[state.currentPlayer];
+      statusEl.textContent = `${turnName}'s turn (${state.currentPlayer})`;
     }
   }
 
-  resetBtn.addEventListener('click', () => {
-    socket.emit('requestReset');
+  socket.on('opponentLeft', () => {
+    statusEl.textContent = 'Your opponent left the game';
+  });
+
+  leaveBtn.addEventListener('click', () => {
+    socket.emit('leaveRoom');
+    showScreen(lobbyScreen);
   });
 </script>
 
